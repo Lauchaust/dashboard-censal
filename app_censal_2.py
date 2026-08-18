@@ -87,7 +87,7 @@ if st.session_state['mostrar_resultados']:
                 resultado_geo = interseccion[interseccion['porc_adentro'] >= tolerancia].copy()
                 resultado_geo = resultado_geo.to_crs(epsg=4326) 
                 
-                # 6. Limpieza extrema, orden y numeración
+               # 6. Limpieza extrema, orden y numeración
                 # Sacamos la geometría para poder trabajar la tabla de texto
                 resultado_tabla = resultado_geo.drop(columns=['geometry'])
                 
@@ -98,6 +98,10 @@ if st.session_state['mostrar_resultados']:
                 if 'Completo' in resultado_tabla.columns:
                     idx_completo = resultado_tabla.columns.get_loc('Completo')
                     resultado_tabla = resultado_tabla.iloc[:, idx_completo:]
+                
+                # AHORA: Borramos las columnas de cálculo que quedaron al final a la derecha
+                basura_derecha = ['ID_CSV', 'area_original', 'area_adentro', 'porc_adentro']
+                resultado_tabla = resultado_tabla.drop(columns=[col for col in basura_derecha if col in resultado_tabla.columns])
                 
                 # Reseteamos los números de fila y forzamos a que arranquen en 1
                 resultado_tabla = resultado_tabla.reset_index(drop=True)
