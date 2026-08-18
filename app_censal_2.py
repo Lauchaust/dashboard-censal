@@ -87,12 +87,21 @@ if st.session_state['mostrar_resultados']:
                 resultado_geo = interseccion[interseccion['porc_adentro'] >= tolerancia].copy()
                 resultado_geo = resultado_geo.to_crs(epsg=4326) 
                 
-                # 6. Separamos la tabla limpia de la geometría
-                columnas_a_borrar = ['geometry', 'Name', 'Description', 'ID_EXTRAIDO', 'ID_CSV', 'area_original', 'area_adentro', 'porc_adentro']
-                resultado_tabla = resultado_geo.drop(columns=[col for col in columnas_a_borrar if col in resultado_geo.columns])
+                # 6. Limpieza extrema, orden y numeración
+                # Sacamos la geometría para poder trabajar la tabla de texto
+                resultado_tabla = resultado_geo.drop(columns=['geometry'])
                 
-                # ¡ACÁ ESTÁ LA CORRECCIÓN! Reseteamos los números de fila para tapar los huecos
+                # Ordenamos los radios censales de menor a mayor
+                resultado_tabla = resultado_tabla.sort_values(by='Completo')
+                
+                # Buscamos dónde está 'Completo' y borramos TODA la basura que haya a su izquierda
+                if 'Completo' in resultado_tabla.columns:
+                    idx_completo = resultado_tabla.columns.get_loc('Completo')
+                    resultado_tabla = resultado_tabla.iloc[:, idx_completo:]
+                
+                # Reseteamos los números de fila y forzamos a que arranquen en 1
                 resultado_tabla = resultado_tabla.reset_index(drop=True)
+                resultado_tabla.index = resultado_tabla.index + 1
                 
                 st.success(f"¡Éxito! Se detectaron {len(resultado_tabla)} radios exactos.")
                 
