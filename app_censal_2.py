@@ -58,7 +58,14 @@ if st.session_state['mostrar_resultados']:
                 mapa['geometry'] = mapa['geometry'].buffer(0)
                 
                 # 2. Unión de datos
-                mapa['ID_EXTRAIDO'] = mapa['Description'].str.extract(r'LINK:\s*(\d+)')
+                # Buscamos la columna sin importar si está en mayúscula o minúscula
+                col_desc = next((col for col in mapa.columns if col.lower() == 'description'), None)
+                
+                if col_desc is None:
+                    st.error(f"Error: No se encontró la columna de descripción en el mapa. Columnas disponibles: {mapa.columns.tolist()}")
+                    st.stop()
+                    
+                mapa['ID_EXTRAIDO'] = mapa[col_desc].astype(str).str.extract(r'LINK:\s*(\d+)')
                 df['ID_CSV'] = df['Completo'].astype(str)
                 df_final = mapa.merge(df, left_on='ID_EXTRAIDO', right_on='ID_CSV')
                 
