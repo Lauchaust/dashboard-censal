@@ -109,7 +109,7 @@ if st.session_state['mostrar_resultados']:
                         tooltip=folium.GeoJsonTooltip(fields=['Completo'], aliases=['Radio Censal:'])
                     ).add_to(m)
                 
-                st_folium(m, width=1000, height=450, returned_objects=[])
+                st_folium(m, width=1000, height=450, returned_objects=[], key="mapa_matanza")
 
                 # ==========================================
                 # 🌟 GRÁFICOS DINÁMICOS
