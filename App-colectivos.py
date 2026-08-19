@@ -1,7 +1,7 @@
 import streamlit as st
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, MultiLineString
 import fiona
 import tempfile
 import os
@@ -17,20 +17,48 @@ st.set_page_config(page_title="Análisis de Colectivos", layout="wide")
 st.title("🚌 Analizador de Colectivos y Radios Censales")
 st.write("Esta herramienta cruza los radios censales de tu zona con los recorridos de colectivos.")
 
-# --- FILTRO SALVAVIDAS ---
-def es_geometria_valida(geom):
-    """
-    Destruye cualquier línea corrupta de 1 solo punto que exporte MyMaps
-    para evitar que el motor geométrico colapse.
-    """
+# --- FUNCIONES DE SEGURIDAD EXTREMA ---
+def limpiar_linea(geom):
+    """ Extrae de forma segura solo líneas con 2 o más puntos, aislando errores. """
     try:
         if geom is None or geom.is_empty:
-            return False
+            return None
         if geom.geom_type == 'LineString':
-            return len(geom.coords) >= 2
-        return True
+            return geom if len(geom.coords) >= 2 else None
+        elif geom.geom_type == 'MultiLineString':
+            lineas = [line for line in geom.geoms if len(line.coords) >= 2]
+            return MultiLineString(lineas) if lineas else None
+        elif geom.geom_type == 'GeometryCollection':
+            lineas = []
+            for g in geom.geoms:
+                if g.geom_type == 'LineString' and len(g.coords) >= 2:
+                    lineas.append(g)
+                elif g.geom_type == 'MultiLineString':
+                    lineas.extend([line for line in g.geoms if len(line.coords) >= 2])
+            return MultiLineString(lineas) if lineas else None
+        return None
     except Exception:
-        return False
+        return None
+
+def cortar_linea_segura(geom, area):
+    """ Corta una línea contra el polígono de forma aislada. Si la matemática falla, no tira abajo la app. """
+    try:
+        if geom is None: return None
+        corte = geom.intersection(area)
+        return limpiar_linea(corte)
+    except Exception:
+        return None
+
+def reparar_poligono(geom):
+    """ Sanea polígonos corruptos para que el corte no falle. """
+    try:
+        if geom is None or geom.is_empty: return None
+        if geom.geom_type in ['Polygon', 'MultiPolygon']:
+            res = geom.buffer(0)
+            return res if not res.is_empty else None
+        return None
+    except Exception:
+        return None
 
 # --- BARRA LATERAL ---
 with st.sidebar:
@@ -48,7 +76,7 @@ coords_text = st.text_area("📍 Coordenadas de la zona a analizar (Longitud, La
 
 if st.button("🚀 Analizar Recorridos", type="primary"):
     if kml_radios and kml_colectivos and coords_text:
-        with st.spinner("Limpiando archivos corruptos y cruzando datos..."):
+        with st.spinner("Modo Antifallos Activado: Limpiando geometrías corruptas línea por línea..."):
             try:
                 # 1. Crear el polígono con las coordenadas
                 coords = [tuple(map(float, line.split(','))) for line in coords_text.strip().split('\n')]
@@ -63,9 +91,11 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                 capas_r = fiona.listlayers(ruta_r)
                 mapas_r = [gpd.read_file(ruta_r, driver='KML', layer=capa) for capa in capas_r if "Region" not in capa]
                 gdf_radios = pd.concat(mapas_r, ignore_index=True)
-                # Saneamos los polígonos del radio censal
-                gdf_radios['geometry'] = gdf_radios.geometry.buffer(0)
                 os.remove(ruta_r)
+                
+                # Saneamos los polígonos del radio censal de forma segura
+                gdf_radios['geometry'] = gdf_radios.geometry.apply(reparar_poligono)
+                gdf_radios = gdf_radios.dropna(subset=['geometry']).set_geometry('geometry')
 
                 col_desc = next((col for col in gdf_radios.columns if col.lower() == 'description'), None)
                 if col_desc:
@@ -76,7 +106,11 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                 # Filtrar qué radios caen dentro de las coordenadas
                 radios_en_zona = gpd.clip(gdf_radios, gdf_poly)
                 
-                # 3. Leer todos los KMLs de Colectivos y APLICAR FILTRO
+                if radios_en_zona.empty:
+                    st.warning("Los radios censales no intersectan con las coordenadas ingresadas. Revisá las coordenadas.")
+                    st.stop()
+                
+                # 3. Leer todos los KMLs de Colectivos y LIMPIAR FILA POR FILA
                 gdfs_lineas = []
                 for f_col in kml_colectivos:
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_l:
@@ -85,34 +119,34 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                     
                     capas_l = fiona.listlayers(ruta_l)
                     for capa in capas_l:
-                        gdf_temp = gpd.read_file(ruta_l, driver='KML', layer=capa)
-                        # Rompemos las geometrías múltiples para analizar línea por línea
-                        gdf_temp = gdf_temp.explode(index_parts=False)
-                        # Aplicamos el filtro salvavidas ANTES de que procese nada
-                        gdf_temp = gdf_temp[gdf_temp.geometry.apply(es_geometria_valida)]
-                        
-                        if not gdf_temp.empty:
-                            gdfs_lineas.append(gdf_temp)
+                        try:
+                            gdf_temp = gpd.read_file(ruta_l, driver='KML', layer=capa)
+                            # Aislamos las geometrías rotas antes de pasarlas a Geopandas
+                            gdf_temp['geometry'] = gdf_temp.geometry.apply(limpiar_linea)
+                            gdf_temp = gdf_temp.dropna(subset=['geometry']).set_geometry('geometry')
+                            
+                            if not gdf_temp.empty:
+                                gdfs_lineas.append(gdf_temp)
+                        except Exception:
+                            continue # Si la capa entera está irrecuperable, la ignoramos y seguimos
                     os.remove(ruta_l)
                 
                 if not gdfs_lineas:
-                    st.error("No se encontraron líneas válidas en los archivos KML subidos. Es posible que estén vacíos o corruptos.")
+                    st.error("Todas las líneas subidas estaban vacías o corruptas. No hay datos espaciales recuperables.")
                     st.stop()
 
                 # Unir todas las líneas validadas
                 gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
                 
-                # 4. Cruzar los colectivos contra los radios de la zona
-                # Unimos todos los radios en un solo bloque para hacer un corte limpio
-                area_radios = radios_en_zona.geometry.unary_union.buffer(0)
+                # 4. Cortar los colectivos contra los radios (FILA POR FILA, anti-colapso)
+                try:
+                    area_radios = radios_en_zona.geometry.unary_union.buffer(0)
+                except Exception:
+                    area_radios = poly # Si los radios están corruptos, recortamos usando el marco general
                 
-                # Intersección
                 lineas_recortadas = gdf_todas_lineas.copy()
-                lineas_recortadas['geometry'] = lineas_recortadas.geometry.intersection(area_radios)
-                
-                # Segunda pasada de limpieza por los pedacitos generados por el corte
-                lineas_recortadas = lineas_recortadas.explode(index_parts=False)
-                lineas_recortadas = lineas_recortadas[lineas_recortadas.geometry.apply(es_geometria_valida)]
+                lineas_recortadas['geometry'] = lineas_recortadas.geometry.apply(lambda x: cortar_linea_segura(x, area_radios))
+                lineas_recortadas = lineas_recortadas.dropna(subset=['geometry']).set_geometry('geometry')
 
                 # 5. Extraer nombres para el reporte
                 col_nombre = 'Name' if 'Name' in lineas_recortadas.columns else lineas_recortadas.columns[0]
@@ -120,14 +154,14 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                 nombres_unicos.sort()
                 
                 # --- MOSTRAR RESULTADOS ---
-                st.success("✅ ¡Procesamiento exitoso!")
+                st.success("✅ ¡Procesamiento exitoso y blindado contra errores de MyMaps!")
                 
                 st.subheader("📋 Detalle de Líneas de Colectivo")
                 if nombres_unicos:
                     texto_lineas = ", ".join(map(str, nombres_unicos))
                     st.info(f"Las líneas de transporte que atraviesan los radios censales de esta zona son:\n\n**{texto_lineas}**")
                 else:
-                    st.warning("Ninguna de las líneas subidas pasa por estos radios censales.")
+                    st.warning("Ninguna de las líneas subidas pasa por adentro de esta zona.")
                 
                 st.subheader("🗺️ Mapa de Radios y Recorridos")
                 centro_lat = poly.centroid.y
@@ -159,7 +193,6 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                 st_folium(m, width=1000, height=500, returned_objects=[])
                 
             except Exception as e:
-                st.error(f"Hubo un error con los datos ingresados: {e}")
+                st.error(f"Hubo un error crítico: {e}")
     else:
         st.warning("⚠️ Por favor, subí el KML de radios, al menos un KML de colectivos y verificá las coordenadas.")
-            
