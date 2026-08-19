@@ -127,7 +127,7 @@ if st.session_state['mostrar_resultados']:
                 
                 st_folium(m, width=1000, height=450, returned_objects=[], key="mapa_matanza")
 
-                # ==========================================
+              # ==========================================
                 # 🚌 ANÁLISIS DE COLECTIVOS (NUEVO)
                 # ==========================================
                 if uploaded_colectivos:
@@ -146,7 +146,8 @@ if st.session_state['mostrar_resultados']:
                             gdfs_lineas.append(gdf_temp)
                         os.remove(tmp_name_l)
                         
-                   gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
+                    # Todo este bloque tiene que estar alineado con el 'for f_col...' de arriba
+                    gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
                     gdf_todas_lineas = gdf_todas_lineas.to_crs(epsg=4326)
                     
                     # Filtramos para asegurarnos de usar solo las líneas (y esquivar puntos de paradas que rompen el mapa)
@@ -155,11 +156,11 @@ if st.session_state['mostrar_resultados']:
                     # Usamos 'clip' que es la herramienta correcta y segura para recortar líneas con polígonos
                     lineas_recortadas = gpd.clip(gdf_todas_lineas, resultado_geo)
                     
-                    # Limpiamos cualquier "punto" residual que haya quedado al raspar los bordes (evita tu error)
+                    # Limpiamos cualquier "punto" residual que haya quedado al raspar los bordes
                     lineas_recortadas = lineas_recortadas[lineas_recortadas.geometry.type.isin(['LineString', 'MultiLineString'])]
                     
                     if not lineas_recortadas.empty:
-                        # Extraemos los nombres de las líneas (MyMaps suele guardarlo en 'Name')
+                        # Extraemos los nombres de las líneas
                         col_nombre_linea = 'Name' if 'Name' in lineas_recortadas.columns else lineas_recortadas.columns[0]
                         nombres_lineas = lineas_recortadas[col_nombre_linea].dropna().unique().tolist()
                         nombres_texto = ", ".join(map(str, nombres_lineas))
