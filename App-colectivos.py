@@ -128,7 +128,7 @@ if st.session_state['mostrar_resultados']:
                 st_folium(m, width=1000, height=450, returned_objects=[], key="mapa_matanza")
 
                 # ==========================================
-                # 🚌 ANÁLISIS DE COLECTIVOS (NUEVO)
+                # 🚌 ANÁLISIS DE COLECTIVOS (NUEVO Y MEJORADO)
                 # ==========================================
                 if uploaded_colectivos:
                     st.markdown("---")
@@ -147,22 +147,33 @@ if st.session_state['mostrar_resultados']:
                         os.remove(tmp_name_l)
                         
                     gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
-                    gdf_todas_lineas = gdf_todas_lineas.to_crs(epsg=4326)
                     
-                    # 1. Filtramos para usar SOLO líneas y borramos las corruptas (longitud 0)
-                    gdf_todas_lineas = gdf_todas_lineas[gdf_todas_lineas.geometry.type.isin(['LineString', 'MultiLineString'])]
-                    gdf_todas_lineas = gdf_todas_lineas[gdf_todas_lineas.geometry.length > 0]
+                    # 1. Separamos colecciones para sacar puntos (paradas) basura de MyMaps
+                    gdf_todas_lineas = gdf_todas_lineas.explode(index_parts=False)
                     
-                    # 2. Unimos tus radios censales en un solo bloque para que el corte no falle
-                    area_radios = resultado_geo.geometry.unary_union
+                    # 2. Nos quedamos SOLO con líneas reales
+                    gdf_todas_lineas = gdf_todas_lineas[gdf_todas_lineas.geom_type.isin(['LineString', 'MultiLineString'])]
                     
-                    # 3. Cortamos las líneas de forma súper segura contra el bloque
-                    lineas_recortadas = gdf_todas_lineas.copy()
-                    lineas_recortadas['geometry'] = lineas_recortadas.geometry.intersection(area_radios)
+                    # 3. Pasamos todo a METROS (EPSG:3857) para que la matemática sea precisa
+                    gdf_todas_lineas_m = gdf_todas_lineas.to_crs(epsg=3857)
+                    resultado_geo_m = resultado_geo.to_crs(epsg=3857)
                     
-                    # 4. Volvemos a limpiar la basura que pueda generar el corte (puntos sueltos o vacíos)
-                    lineas_recortadas = lineas_recortadas[lineas_recortadas.geometry.type.isin(['LineString', 'MultiLineString'])]
-                    lineas_recortadas = lineas_recortadas[lineas_recortadas.geometry.length > 0]
+                    # 4. Unimos los radios en un bloque sólido y le aplicamos buffer 0 por si hay bordes corruptos
+                    area_radios_m = resultado_geo_m.geometry.unary_union.buffer(0)
+                    
+                    # 5. Cortamos las líneas
+                    lineas_recortadas_m = gdf_todas_lineas_m.copy()
+                    lineas_recortadas_m['geometry'] = lineas_recortadas_m.geometry.intersection(area_radios_m)
+                    
+                    # 6. Explotamos de nuevo por si el corte separó una línea en varios pedacitos
+                    lineas_recortadas_m = lineas_recortadas_m.explode(index_parts=False)
+                    
+                    # 7. FILTRO ANTI-ERROR: Borramos puntos, polígonos fantasmas y basuritas menores a 5 metros
+                    lineas_recortadas_m = lineas_recortadas_m[lineas_recortadas_m.geom_type.isin(['LineString', 'MultiLineString'])]
+                    lineas_recortadas_m = lineas_recortadas_m[lineas_recortadas_m.geometry.length > 5]
+                    
+                    # 8. Volvemos al formato GPS para el mapa
+                    lineas_recortadas = lineas_recortadas_m.to_crs(epsg=4326)
                     
                     if not lineas_recortadas.empty:
                         # Extraemos los nombres de las líneas
@@ -231,4 +242,4 @@ if st.session_state['mostrar_resultados']:
                 if os.path.exists(ruta_temp_kml):
                     os.remove(ruta_temp_kml)
     else:
-        st.warning("Por favor, subí los dos archivos en la barra lateral y pegá las coordenadas.")
+        st.warning("Por favor, subí los dos archivos base en la barra lateral y pegá las coordenadas.")
