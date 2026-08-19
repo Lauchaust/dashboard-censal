@@ -127,7 +127,7 @@ if st.session_state['mostrar_resultados']:
                 
                 st_folium(m, width=1000, height=450, returned_objects=[], key="mapa_matanza")
 
-              # ==========================================
+                # ==========================================
                 # 🚌 ANÁLISIS DE COLECTIVOS (NUEVO)
                 # ==========================================
                 if uploaded_colectivos:
@@ -146,18 +146,23 @@ if st.session_state['mostrar_resultados']:
                             gdfs_lineas.append(gdf_temp)
                         os.remove(tmp_name_l)
                         
-                    # Todo este bloque tiene que estar alineado con el 'for f_col...' de arriba
                     gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
                     gdf_todas_lineas = gdf_todas_lineas.to_crs(epsg=4326)
                     
-                    # Filtramos para asegurarnos de usar solo las líneas (y esquivar puntos de paradas que rompen el mapa)
+                    # 1. Filtramos para usar SOLO líneas y borramos las corruptas (longitud 0)
                     gdf_todas_lineas = gdf_todas_lineas[gdf_todas_lineas.geometry.type.isin(['LineString', 'MultiLineString'])]
+                    gdf_todas_lineas = gdf_todas_lineas[gdf_todas_lineas.geometry.length > 0]
                     
-                    # Usamos 'clip' que es la herramienta correcta y segura para recortar líneas con polígonos
-                    lineas_recortadas = gpd.clip(gdf_todas_lineas, resultado_geo)
+                    # 2. Unimos tus radios censales en un solo bloque para que el corte no falle
+                    area_radios = resultado_geo.geometry.unary_union
                     
-                    # Limpiamos cualquier "punto" residual que haya quedado al raspar los bordes
+                    # 3. Cortamos las líneas de forma súper segura contra el bloque
+                    lineas_recortadas = gdf_todas_lineas.copy()
+                    lineas_recortadas['geometry'] = lineas_recortadas.geometry.intersection(area_radios)
+                    
+                    # 4. Volvemos a limpiar la basura que pueda generar el corte (puntos sueltos o vacíos)
                     lineas_recortadas = lineas_recortadas[lineas_recortadas.geometry.type.isin(['LineString', 'MultiLineString'])]
+                    lineas_recortadas = lineas_recortadas[lineas_recortadas.geometry.length > 0]
                     
                     if not lineas_recortadas.empty:
                         # Extraemos los nombres de las líneas
