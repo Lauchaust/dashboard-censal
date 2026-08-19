@@ -8,6 +8,7 @@ import os
 import folium
 from streamlit_folium import st_folium
 import warnings
+import re
 
 # Configuraciones iniciales
 warnings.filterwarnings("ignore")
@@ -19,7 +20,6 @@ st.write("Esta herramienta cruza los radios censales de tu zona con los recorrid
 
 # --- FUNCIONES DE SEGURIDAD EXTREMA ---
 def limpiar_linea(geom):
-    """ Extrae de forma segura solo líneas con 2 o más puntos, aislando errores. """
     try:
         if geom is None or geom.is_empty:
             return None
@@ -41,7 +41,6 @@ def limpiar_linea(geom):
         return None
 
 def cortar_linea_segura(geom, area):
-    """ Corta una línea contra el polígono de forma aislada. Si la matemática falla, no tira abajo la app. """
     try:
         if geom is None: return None
         corte = geom.intersection(area)
@@ -50,7 +49,6 @@ def cortar_linea_segura(geom, area):
         return None
 
 def reparar_poligono(geom):
-    """ Sanea polígonos corruptos para que el corte no falle. """
     try:
         if geom is None or geom.is_empty: return None
         if geom.geom_type in ['Polygon', 'MultiPolygon']:
@@ -59,6 +57,32 @@ def reparar_poligono(geom):
         return None
     except Exception:
         return None
+
+def extraer_nombre(row):
+    """Busca el nombre de la línea en cualquier rincón del archivo KML"""
+    # 1. Buscar en ExtendedData si fiona lo separó en columnas ocultas
+    if 'LINEA' in row.index and pd.notna(row['LINEA']) and str(row['LINEA']).strip() != '':
+        nombre = f"Línea {row['LINEA']}"
+        if 'RAMAL' in row.index and pd.notna(row['RAMAL']) and str(row['RAMAL']).strip() != '':
+            nombre += f" (Ramal {row['RAMAL']})"
+        return nombre
+        
+    # 2. Buscar adentro de la etiqueta Description (HTML)
+    if 'Description' in row.index and pd.notna(row['Description']):
+        desc = str(row['Description'])
+        m_linea = re.search(r'LINEA:\s*([^<]+)', desc)
+        if m_linea:
+            nombre = f"Línea {m_linea.group(1).strip()}"
+            m_ramal = re.search(r'RAMAL:\s*([^<]+)', desc)
+            if m_ramal:
+                nombre += f" (Ramal {m_ramal.group(1).strip()})"
+            return nombre
+            
+    # 3. Caer en la etiqueta Name clásica (por si subís otros mapas)
+    if 'Name' in row.index and pd.notna(row['Name']) and str(row['Name']).strip() != '':
+        return str(row['Name'])
+        
+    return "Línea Desconocida"
 
 # --- BARRA LATERAL ---
 with st.sidebar:
@@ -76,7 +100,7 @@ coords_text = st.text_area("📍 Coordenadas de la zona a analizar (Longitud, La
 
 if st.button("🚀 Analizar Recorridos", type="primary"):
     if kml_radios and kml_colectivos and coords_text:
-        with st.spinner("Modo Antifallos Activado: Limpiando geometrías corruptas línea por línea..."):
+        with st.spinner("Modo Antifallos Activado: Extrayendo nombres ocultos..."):
             try:
                 # 1. Crear el polígono con las coordenadas
                 coords = [tuple(map(float, line.split(','))) for line in coords_text.strip().split('\n')]
@@ -93,7 +117,7 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                 gdf_radios = pd.concat(mapas_r, ignore_index=True)
                 os.remove(ruta_r)
                 
-                # Saneamos los polígonos del radio censal de forma segura
+                # Saneamos los polígonos del radio censal
                 gdf_radios['geometry'] = gdf_radios.geometry.apply(reparar_poligono)
                 gdf_radios = gdf_radios.dropna(subset=['geometry']).set_geometry('geometry')
 
@@ -103,14 +127,13 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                 else:
                     gdf_radios['Radio_ID'] = "Radio Censal"
 
-                # Filtrar qué radios caen dentro de las coordenadas
                 radios_en_zona = gpd.clip(gdf_radios, gdf_poly)
                 
                 if radios_en_zona.empty:
                     st.warning("Los radios censales no intersectan con las coordenadas ingresadas. Revisá las coordenadas.")
                     st.stop()
                 
-                # 3. Leer todos los KMLs de Colectivos y LIMPIAR FILA POR FILA
+                # 3. Leer todos los KMLs de Colectivos
                 gdfs_lineas = []
                 for f_col in kml_colectivos:
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.kml') as tmp_l:
@@ -121,44 +144,44 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                     for capa in capas_l:
                         try:
                             gdf_temp = gpd.read_file(ruta_l, driver='KML', layer=capa)
-                            # Aislamos las geometrías rotas antes de pasarlas a Geopandas
                             gdf_temp['geometry'] = gdf_temp.geometry.apply(limpiar_linea)
                             gdf_temp = gdf_temp.dropna(subset=['geometry']).set_geometry('geometry')
+                            
+                            # APLICAMOS EL ESCÁNER DE NOMBRES INTELIGENTE ACA
+                            gdf_temp['Nombre_Real'] = gdf_temp.apply(extraer_nombre, axis=1)
                             
                             if not gdf_temp.empty:
                                 gdfs_lineas.append(gdf_temp)
                         except Exception:
-                            continue # Si la capa entera está irrecuperable, la ignoramos y seguimos
+                            continue 
                     os.remove(ruta_l)
                 
                 if not gdfs_lineas:
-                    st.error("Todas las líneas subidas estaban vacías o corruptas. No hay datos espaciales recuperables.")
+                    st.error("Todas las líneas subidas estaban vacías o corruptas.")
                     st.stop()
 
-                # Unir todas las líneas validadas
                 gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
                 
-                # 4. Cortar los colectivos contra los radios (FILA POR FILA, anti-colapso)
+                # 4. Cortar los colectivos contra los radios
                 try:
                     area_radios = radios_en_zona.geometry.unary_union.buffer(0)
                 except Exception:
-                    area_radios = poly # Si los radios están corruptos, recortamos usando el marco general
+                    area_radios = poly 
                 
                 lineas_recortadas = gdf_todas_lineas.copy()
                 lineas_recortadas['geometry'] = lineas_recortadas.geometry.apply(lambda x: cortar_linea_segura(x, area_radios))
                 lineas_recortadas = lineas_recortadas.dropna(subset=['geometry']).set_geometry('geometry')
 
-                # 5. Extraer nombres para el reporte
-                col_nombre = 'Name' if 'Name' in lineas_recortadas.columns else lineas_recortadas.columns[0]
-                nombres_unicos = lineas_recortadas[col_nombre].dropna().unique().tolist()
+                # 5. Extraer nombres únicos para el reporte usando nuestra nueva columna
+                nombres_unicos = lineas_recortadas['Nombre_Real'].dropna().unique().tolist()
                 nombres_unicos.sort()
                 
                 # --- MOSTRAR RESULTADOS ---
-                st.success("✅ ¡Procesamiento exitoso y blindado contra errores de MyMaps!")
+                st.success("✅ ¡Procesamiento exitoso!")
                 
                 st.subheader("📋 Detalle de Líneas de Colectivo")
                 if nombres_unicos:
-                    texto_lineas = ", ".join(map(str, nombres_unicos))
+                    texto_lineas = " • ".join(map(str, nombres_unicos))
                     st.info(f"Las líneas de transporte que atraviesan los radios censales de esta zona son:\n\n**{texto_lineas}**")
                 else:
                     st.warning("Ninguna de las líneas subidas pasa por adentro de esta zona.")
@@ -168,7 +191,7 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                 centro_lon = poly.centroid.x
                 m = folium.Map(location=[centro_lat, centro_lon], zoom_start=14)
                 
-                # Dibujar borde de zona
+                # Dibujar borde
                 folium.Polygon(locations=[(lat, lon) for lon, lat in coords], 
                                color='black', weight=3, fill=False, tooltip="Límite de la Zona").add_to(m)
                 
@@ -181,13 +204,13 @@ if st.button("🚀 Analizar Recorridos", type="primary"):
                         tooltip=folium.GeoJsonTooltip(fields=['Radio_ID'], aliases=['Radio Censal:'])
                     ).add_to(m)
                 
-                # Dibujar Colectivos
+                # Dibujar Colectivos (AQUÍ LE PASAMOS LA NUEVA COLUMNA AL TOOLTIP)
                 if not lineas_recortadas.empty:
                     folium.GeoJson(
-                        lineas_recortadas[[col_nombre, 'geometry']].to_json(),
+                        lineas_recortadas[['Nombre_Real', 'geometry']].to_json(),
                         name="Líneas de Colectivo",
                         style_function=lambda x: {'color': 'red', 'weight': 4},
-                        tooltip=folium.GeoJsonTooltip(fields=[col_nombre], aliases=['Línea:'])
+                        tooltip=folium.GeoJsonTooltip(fields=['Nombre_Real'], aliases=['Línea:'])
                     ).add_to(m)
                 
                 st_folium(m, width=1000, height=500, returned_objects=[])
