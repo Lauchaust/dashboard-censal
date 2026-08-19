@@ -146,11 +146,17 @@ if st.session_state['mostrar_resultados']:
                             gdfs_lineas.append(gdf_temp)
                         os.remove(tmp_name_l)
                         
-                    gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
+                   gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
                     gdf_todas_lineas = gdf_todas_lineas.to_crs(epsg=4326)
                     
-                    # Recortamos las líneas para que SOLO queden los pedazos que están dentro/sobre los radios
-                    lineas_recortadas = gpd.overlay(gdf_todas_lineas, resultado_geo, how='intersection')
+                    # Filtramos para asegurarnos de usar solo las líneas (y esquivar puntos de paradas que rompen el mapa)
+                    gdf_todas_lineas = gdf_todas_lineas[gdf_todas_lineas.geometry.type.isin(['LineString', 'MultiLineString'])]
+                    
+                    # Usamos 'clip' que es la herramienta correcta y segura para recortar líneas con polígonos
+                    lineas_recortadas = gpd.clip(gdf_todas_lineas, resultado_geo)
+                    
+                    # Limpiamos cualquier "punto" residual que haya quedado al raspar los bordes (evita tu error)
+                    lineas_recortadas = lineas_recortadas[lineas_recortadas.geometry.type.isin(['LineString', 'MultiLineString'])]
                     
                     if not lineas_recortadas.empty:
                         # Extraemos los nombres de las líneas (MyMaps suele guardarlo en 'Name')
