@@ -42,7 +42,7 @@ coords_text = st.text_area("📍 Pegá tus coordenadas (Longitud, Latitud):",
 if st.button("🚀 Procesar y Visualizar"):
     st.session_state['mostrar_resultados'] = True
 
-# Si la memoria está encendida, corremos todo el proceso y lo dejamos fijo en pantalla
+# Si la memoria está encendida, corremos todo el proceso
 if st.session_state['mostrar_resultados']:
     if uploaded_csv and uploaded_kml and coords_text:
         with st.spinner('Midiendo áreas, dibujando mapas y procesando...'):
@@ -128,7 +128,7 @@ if st.session_state['mostrar_resultados']:
                 st_folium(m, width=1000, height=450, returned_objects=[], key="mapa_matanza")
 
                 # ==========================================
-                # 🚌 ANÁLISIS DE COLECTIVOS (NUEVO Y MEJORADO)
+                # 🚌 ANÁLISIS DE COLECTIVOS
                 # ==========================================
                 if uploaded_colectivos:
                     st.markdown("---")
@@ -146,64 +146,50 @@ if st.session_state['mostrar_resultados']:
                             gdfs_lineas.append(gdf_temp)
                         os.remove(tmp_name_l)
                         
-                    gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
-                    
-                    # 1. Separamos colecciones para sacar puntos (paradas) basura de MyMaps
-                    gdf_todas_lineas = gdf_todas_lineas.explode(index_parts=False)
-                    
-                    # 2. Nos quedamos SOLO con líneas reales
-                    gdf_todas_lineas = gdf_todas_lineas[gdf_todas_lineas.geom_type.isin(['LineString', 'MultiLineString'])]
-                    
-                    # 3. Pasamos todo a METROS (EPSG:3857) para que la matemática sea precisa
-                    gdf_todas_lineas_m = gdf_todas_lineas.to_crs(epsg=3857)
-                    resultado_geo_m = resultado_geo.to_crs(epsg=3857)
-                    
-                    # 4. Unimos los radios en un bloque sólido y le aplicamos buffer 0 por si hay bordes corruptos
-                    area_radios_m = resultado_geo_m.geometry.unary_union.buffer(0)
-                    
-                    # 5. Cortamos las líneas
-                    lineas_recortadas_m = gdf_todas_lineas_m.copy()
-                    lineas_recortadas_m['geometry'] = lineas_recortadas_m.geometry.intersection(area_radios_m)
-                    
-                    # 6. Explotamos de nuevo por si el corte separó una línea en varios pedacitos
-                    lineas_recortadas_m = lineas_recortadas_m.explode(index_parts=False)
-                    
-                    # 7. FILTRO ANTI-ERROR: Borramos puntos, polígonos fantasmas y basuritas menores a 5 metros
-                    lineas_recortadas_m = lineas_recortadas_m[lineas_recortadas_m.geom_type.isin(['LineString', 'MultiLineString'])]
-                    lineas_recortadas_m = lineas_recortadas_m[lineas_recortadas_m.geometry.length > 5]
-                    
-                    # 8. Volvemos al formato GPS para el mapa
-                    lineas_recortadas = lineas_recortadas_m.to_crs(epsg=4326)
-                    
-                    if not lineas_recortadas.empty:
-                        # Extraemos los nombres de las líneas
-                        col_nombre_linea = 'Name' if 'Name' in lineas_recortadas.columns else lineas_recortadas.columns[0]
-                        nombres_lineas = lineas_recortadas[col_nombre_linea].dropna().unique().tolist()
-                        nombres_texto = ", ".join(map(str, nombres_lineas))
+                    if gdfs_lineas:
+                        gdf_todas_lineas = pd.concat(gdfs_lineas, ignore_index=True)
+                        gdf_todas_lineas = gdf_todas_lineas.explode(index_parts=False)
+                        gdf_todas_lineas = gdf_todas_lineas[gdf_todas_lineas.geom_type.isin(['LineString', 'MultiLineString'])]
                         
-                        st.info(f"**Las líneas que pasan por estos radios censales son:** {nombres_texto}")
+                        gdf_todas_lineas_m = gdf_todas_lineas.to_crs(epsg=3857)
+                        resultado_geo_m = resultado_geo.to_crs(epsg=3857)
                         
-                        # Dibujamos el segundo mapa
-                        m2 = folium.Map(location=[centro_lat, centro_lon], zoom_start=14)
+                        area_radios_m = resultado_geo_m.geometry.unary_union.buffer(0)
                         
-                        # Fondo: Radios censales
-                        folium.GeoJson(
-                            resultado_geo[['Completo', 'geometry']].to_json(),
-                            name="Radios Censales",
-                            style_function=lambda x: {'fillColor': 'gray', 'color': 'gray', 'weight': 1, 'fillOpacity': 0.2}
-                        ).add_to(m2)
+                        lineas_recortadas_m = gdf_todas_lineas_m.copy()
+                        lineas_recortadas_m['geometry'] = lineas_recortadas_m.geometry.intersection(area_radios_m)
                         
-                        # Frente: Pedacitos de colectivos recortados
-                        folium.GeoJson(
-                            lineas_recortadas.to_json(),
-                            name="Líneas de Colectivo",
-                            style_function=lambda x: {'color': 'red', 'weight': 4},
-                            tooltip=folium.GeoJsonTooltip(fields=[col_nombre_linea], aliases=['Línea:'])
-                        ).add_to(m2)
+                        lineas_recortadas_m = lineas_recortadas_m.explode(index_parts=False)
+                        lineas_recortadas_m = lineas_recortadas_m[lineas_recortadas_m.geom_type.isin(['LineString', 'MultiLineString'])]
+                        lineas_recortadas_m = lineas_recortadas_m[lineas_recortadas_m.geometry.length > 5]
                         
-                        st_folium(m2, width=1000, height=450, returned_objects=[], key="mapa_colectivos")
-                    else:
-                        st.warning("Las líneas subidas no atraviesan los radios censales de esta zona.")
+                        lineas_recortadas = lineas_recortadas_m.to_crs(epsg=4326)
+                        
+                        if not lineas_recortadas.empty:
+                            col_nombre_linea = 'Name' if 'Name' in lineas_recortadas.columns else lineas_recortadas.columns[0]
+                            nombres_lineas = lineas_recortadas[col_nombre_linea].dropna().unique().tolist()
+                            nombres_texto = ", ".join(map(str, nombres_lineas))
+                            
+                            st.info(f"**Las líneas que pasan por estos radios censales son:** {nombres_texto}")
+                            
+                            m2 = folium.Map(location=[centro_lat, centro_lon], zoom_start=14)
+                            
+                            folium.GeoJson(
+                                resultado_geo[['Completo', 'geometry']].to_json(),
+                                name="Radios Censales",
+                                style_function=lambda x: {'fillColor': 'gray', 'color': 'gray', 'weight': 1, 'fillOpacity': 0.2}
+                            ).add_to(m2)
+                            
+                            folium.GeoJson(
+                                lineas_recortadas.to_json(),
+                                name="Líneas de Colectivo",
+                                style_function=lambda x: {'color': 'red', 'weight': 4},
+                                tooltip=folium.GeoJsonTooltip(fields=[col_nombre_linea], aliases=['Línea:'])
+                            ).add_to(m2)
+                            
+                            st_folium(m2, width=1000, height=450, returned_objects=[], key="mapa_colectivos")
+                        else:
+                            st.warning("Las líneas subidas no atraviesan los radios censales de esta zona.")
 
                 # ==========================================
                 # 🌟 GRÁFICOS DINÁMICOS
@@ -242,4 +228,4 @@ if st.session_state['mostrar_resultados']:
                 if os.path.exists(ruta_temp_kml):
                     os.remove(ruta_temp_kml)
     else:
-        st.warning("Por favor, subí los dos archivos base en la barra lateral y pegá las coordenadas.")
+        st.warning("Por favor, subí los archivos en la barra lateral y pegá las coordenadas.")
