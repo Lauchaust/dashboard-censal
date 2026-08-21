@@ -156,10 +156,73 @@ if st.session_state['mostrar_resultados']:
                 # 🌟 TABLA Y DESCARGA
                 # ==========================================
                 st.subheader("📋 Tabla de Datos Final")
-                st.dataframe(resultado_tabla)
+                
+                # 1. Limpiamos la fila TOTAL original congelada (si se coló)
+                resultado_tabla = resultado_tabla[resultado_tabla['Completo'] != 'TOTAL']
+
+                # 2. Sumamos todas las columnas numéricas absolutas
+                totales = resultado_tabla.sum(numeric_only=True)
+                df_totales = pd.DataFrame([totales])
+                df_totales['Completo'] = 'TOTAL' 
+
+                # 3. RECREAMOS LAS FÓRMULAS DE LOS PORCENTAJES EN VIVO
+                # A. Porcentajes sobre el total de VIVIENDAS
+                cols_viviendas = ['Agua de red', 'Red de cloaca', 'Gas natural', 'Tiene internet', 
+                                  'No tiene internet', 'Propia', 'Alquilada', 'Cedida por trabajo', 
+                                  'Prestada', 'Otra situacion']
+                for col in cols_viviendas:
+                    if col in df_totales.columns:
+                        df_totales[col + ' %'] = (df_totales[col] / df_totales['Viviendas'] * 100).round(2).astype(str) + '%'
+
+                # B. Porcentajes sobre viviendas PROPIAS
+                if 'Propia' in df_totales.columns:
+                    df_totales['Escritura %'] = (df_totales['Escritura'] / df_totales['Propia'] * 100).round(2).astype(str) + '%'
+                    df_totales['Boleto de compra-venta %'] = (df_totales['Boleto de compra-venta'] / df_totales['Propia'] * 100).round(2).astype(str) + '%'
+                    df_totales['Otra documentacion %'] = (df_totales['Otra documentación'] / df_totales['Propia'] * 100).round(2).astype(str) + '%'
+                    df_totales['No tiene documentacion %'] = (df_totales['No tiene documentación'] / df_totales['Propia'] * 100).round(2).astype(str) + '%'
+
+                # C. Porcentajes sobre la POBLACIÓN TOTAL
+                cols_poblacion = {
+                    'Obra social o prepaga (incluye pami)': 'Obra social %',
+                    'Programas o planes estatales': 'Programas o planes estatales %',
+                    'No tiene ni obra social, ni prepaga, ni plan de salud': 'No tiene ni obra social, ni prepaga, ni plan de salud %',
+                    'Cobra jubilación': 'Porcentaje_15',
+                    'No cobra jubilación': 'Porcentaje_16',
+                    'Mujer': 'Porcentaje_17',
+                    'Varon': 'Porcentaje_18',
+                    'Hasta 14 años': 'Porcentaje_19',
+                    '15 a 64 años': 'Porcentaje_20',
+                    '65 o más': 'Porcentaje_21'
+                }
+                for col, nombre_pct in cols_poblacion.items():
+                    if col in df_totales.columns:
+                        df_totales[nombre_pct] = (df_totales[col] / df_totales['Población'] * 100).round(2).astype(str) + '%'
+
+                # D. Porcentajes de EDUCACIÓN
+                base_edu = (df_totales.get('Jardín maternal, guardería, centro de cuidado, salas de 0 a 5, jardín de infantes o preescolar', 0) +
+                            df_totales.get('Primario', 0) + df_totales.get('Secundario', 0) + df_totales.get('Terciario no universitario', 0) + 
+                            df_totales.get('Universitario de grado', 0) + df_totales.get('Posgrado (especialización, maestría o doctorado)', 0))
+                
+                df_totales['_22'] = (df_totales.get('Jardín maternal, guardería, centro de cuidado, salas de 0 a 5, jardín de infantes o preescolar', 0) / base_edu * 100).round(2).astype(str) + '%'
+                df_totales['Porcentaje_23'] = (df_totales.get('Primario', 0) / base_edu * 100).round(2).astype(str) + '%'
+                df_totales['Porcentaje_24'] = (df_totales.get('Secundario', 0) / base_edu * 100).round(2).astype(str) + '%'
+                df_totales['Porcentaje_25'] = (df_totales.get('Terciario no universitario', 0) / base_edu * 100).round(2).astype(str) + '%'
+                df_totales['Porcentaje_26'] = (df_totales.get('Universitario de grado', 0) / base_edu * 100).round(2).astype(str) + '%'
+                df_totales['Posgrado %'] = (df_totales.get('Posgrado (especialización, maestría o doctorado)', 0) / base_edu * 100).round(2).astype(str) + '%'
+
+                # E. Porcentajes de OCUPACIÓN
+                base_ocupacion = df_totales.get('Ocupado', 0) + df_totales.get('Desocupado', 0) + df_totales.get('Inactivo', 0)
+                df_totales['Ocupado %'] = (df_totales.get('Ocupado', 0) / base_ocupacion * 100).round(2).astype(str) + '%'
+                df_totales['Desocupado %'] = (df_totales.get('Desocupado', 0) / base_ocupacion * 100).round(2).astype(str) + '%'
+                df_totales['Inactivo %'] = (df_totales.get('Inactivo', 0) / base_ocupacion * 100).round(2).astype(str) + '%'
+
+                # 4. Unimos todo y lo mandamos a la pantalla
+                df_final = pd.concat([resultado_tabla, df_totales], ignore_index=True)
+
+                st.dataframe(df_final)
                 
                 buffer = io.BytesIO()
-                resultado_tabla.to_excel(buffer, index=False)
+                df_final.to_excel(buffer, index=False)
                 st.download_button("💾 Descargar Excel Limpio", data=buffer.getvalue(), file_name="Resultado_Censal_Filtrado.xlsx")
                 
             except Exception as e:
