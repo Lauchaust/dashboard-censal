@@ -58,7 +58,6 @@ if st.session_state['mostrar_resultados']:
                 mapa['geometry'] = mapa['geometry'].buffer(0)
                 
                 # 2. Unión de datos
-                # Buscamos la columna sin importar si está en mayúscula o minúscula
                 col_desc = next((col for col in mapa.columns if col.lower() == 'description'), None)
                 
                 if col_desc is None:
@@ -88,22 +87,16 @@ if st.session_state['mostrar_resultados']:
                 resultado_geo = resultado_geo.to_crs(epsg=4326) 
                 
                # 6. Limpieza extrema, orden y numeración
-                # Sacamos la geometría para poder trabajar la tabla de texto
                 resultado_tabla = resultado_geo.drop(columns=['geometry'])
-                
-                # Ordenamos los radios censales de menor a mayor
                 resultado_tabla = resultado_tabla.sort_values(by='Completo')
                 
-                # Buscamos dónde está 'Completo' y borramos TODA la basura que haya a su izquierda
                 if 'Completo' in resultado_tabla.columns:
                     idx_completo = resultado_tabla.columns.get_loc('Completo')
                     resultado_tabla = resultado_tabla.iloc[:, idx_completo:]
                 
-                # AHORA: Borramos las columnas de cálculo que quedaron al final a la derecha
                 basura_derecha = ['ID_CSV', 'area_original', 'area_adentro', 'porc_adentro']
                 resultado_tabla = resultado_tabla.drop(columns=[col for col in basura_derecha if col in resultado_tabla.columns])
                 
-                # Reseteamos los números de fila y forzamos a que arranquen en 1
                 resultado_tabla = resultado_tabla.reset_index(drop=True)
                 resultado_tabla.index = resultado_tabla.index + 1
                 
@@ -153,52 +146,51 @@ if st.session_state['mostrar_resultados']:
                     st.info("No hay columnas numéricas para graficar.")
 
                 # ==========================================
-                # 🌟 TABLA Y DESCARGA
+                # 🌟 TABLA Y DESCARGA (Fila Total con lógica de universos válidos)
                 # ==========================================
                 st.subheader("📋 Tabla de Datos Final")
                 
-                # 1. Limpiamos la fila TOTAL original congelada (si se coló)
                 resultado_tabla = resultado_tabla[resultado_tabla['Completo'] != 'TOTAL']
 
-                # 2. Sumamos todas las columnas numéricas absolutas
                 totales = resultado_tabla.sum(numeric_only=True)
                 df_totales = pd.DataFrame([totales])
                 df_totales['Completo'] = 'TOTAL' 
 
-                # 3. RECREAMOS LAS FÓRMULAS DE LOS PORCENTAJES EN VIVO (Basadas en Viviendas o Población)
-                # A. Porcentajes sobre el total de VIVIENDAS
-                cols_viviendas = ['Agua de red', 'Red de cloaca', 'Gas natural', 'Tiene internet', 
-                                  'No tiene internet', 'Propia', 'Alquilada', 'Cedida por trabajo', 
-                                  'Prestada', 'Otra situacion']
-                for col in cols_viviendas:
-                    if col in df_totales.columns and 'Viviendas' in df_totales.columns:
-                        df_totales[col + ' %'] = (df_totales[col] / df_totales['Viviendas'] * 100).round(2).astype(str) + '%'
+                # Aplicamos el cálculo por sumatoria del universo válido de cada variable (Denominador correcto)
+                if 'Viviendas' in df_totales.columns:
+                    v_tot = df_totales['Viviendas'].values[0]
+                    if v_tot > 0:
+                        for col in ['Agua de red', 'Red de cloaca', 'Gas natural', 'Tiene internet', 'No tiene internet', 'Propia', 'Alquilada', 'Cedida por trabajo', 'Prestada', 'Otra situacion']:
+                            if col in df_totales.columns:
+                                df_totales[col + ' %'] = (df_totales[col] / v_tot * 100).round(2).astype(str) + '%'
 
-                # B. Porcentajes sobre viviendas PROPIAS
                 if 'Propia' in df_totales.columns:
-                    df_totales['Escritura %'] = (df_totales['Escritura'] / df_totales['Propia'] * 100).round(2).astype(str) + '%'
-                    df_totales['Boleto de compra-venta %'] = (df_totales['Boleto de compra-venta'] / df_totales['Propia'] * 100).round(2).astype(str) + '%'
-                    df_totales['Otra documentacion %'] = (df_totales['Otra documentación'] / df_totales['Propia'] * 100).round(2).astype(str) + '%'
-                    df_totales['No tiene documentacion %'] = (df_totales['No tiene documentación'] / df_totales['Propia'] * 100).round(2).astype(str) + '%'
+                    prop_tot = df_totales['Propia'].values[0]
+                    if prop_tot > 0:
+                        df_totales['Escritura %'] = (df_totales['Escritura'] / prop_tot * 100).round(2).astype(str) + '%'
+                        df_totales['Boleto de compra-venta %'] = (df_totales['Boleto de compra-venta'] / prop_tot * 100).round(2).astype(str) + '%'
+                        df_totales['Otra documentacion %'] = (df_totales['Otra documentación'] / prop_tot * 100).round(2).astype(str) + '%'
+                        df_totales['No tiene documentacion %'] = (df_totales['No tiene documentación'] / prop_tot * 100).round(2).astype(str) + '%'
 
-                # C. Porcentajes sobre la POBLACIÓN TOTAL
-                cols_poblacion = {
-                    'Obra social o prepaga (incluye pami)': 'Obra social %',
-                    'Programas o planes estatales': 'Programas o planes estatales %',
-                    'No tiene ni obra social, ni prepaga, ni plan de salud': 'No tiene ni obra social, ni prepaga, ni plan de salud %',
-                    'Cobra jubilación': 'Porcentaje_15',
-                    'No cobra jubilación': 'Porcentaje_16',
-                    'Mujer': 'Porcentaje_17',
-                    'Varon': 'Porcentaje_18',
-                    'Hasta 14 años': 'Porcentaje_19',
-                    '15 a 64 años': 'Porcentaje_20',
-                    '65 o más': 'Porcentaje_21'
-                }
-                for col, nombre_pct in cols_poblacion.items():
-                    if col in df_totales.columns and 'Población' in df_totales.columns:
-                        df_totales[nombre_pct] = (df_totales[col] / df_totales['Población'] * 100).round(2).astype(str) + '%'
+                if 'Población' in df_totales.columns:
+                    pob_tot = df_totales['Población'].values[0]
+                    if pob_tot > 0:
+                        cols_poblacion = {
+                            'Obra social o prepaga (incluye pami)': 'Obra social %',
+                            'Programas o planes estatales': 'Programas o planes estatales %',
+                            'No tiene ni obra social, ni prepaga, ni plan de salud': 'No tiene ni obra social, ni prepaga, ni plan de salud %',
+                            'Cobra jubilación': 'Porcentaje_15',
+                            'No cobra jubilación': 'Porcentaje_16',
+                            'Mujer': 'Porcentaje_17',
+                            'Varon': 'Porcentaje_18',
+                            'Hasta 14 años': 'Porcentaje_19',
+                            '15 a 64 años': 'Porcentaje_20',
+                            '65 o más': 'Porcentaje_21'
+                        }
+                        for col, nombre_pct in cols_poblacion.items():
+                            if col in df_totales.columns:
+                                df_totales[nombre_pct] = (df_totales[col] / pob_tot * 100).round(2).astype(str) + '%'
 
-                # 4. Unimos todo y lo mandamos a la pantalla
                 df_final = pd.concat([resultado_tabla, df_totales], ignore_index=True)
 
                 st.dataframe(df_final)
