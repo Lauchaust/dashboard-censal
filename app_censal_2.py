@@ -146,31 +146,47 @@ if st.session_state['mostrar_resultados']:
                     st.info("No hay columnas numéricas para graficar.")
 
                 # ==========================================
-                # 🌟 TABLA Y DESCARGA (Fila Total con lógica de universos válidos)
+                # 🌟 TABLA Y DESCARGA
                 # ==========================================
                 st.subheader("📋 Tabla de Datos Final")
                 
+                # 1. Limpiamos la fila TOTAL original congelada (si se coló)
                 resultado_tabla = resultado_tabla[resultado_tabla['Completo'] != 'TOTAL']
 
+                # 2. Sumamos todas las columnas numéricas absolutas
                 totales = resultado_tabla.sum(numeric_only=True)
                 df_totales = pd.DataFrame([totales])
                 df_totales['Completo'] = 'TOTAL' 
 
-                # Aplicamos el cálculo por sumatoria del universo válido de cada variable (Denominador correcto)
-                if 'Viviendas' in df_totales.columns:
-                    v_tot = df_totales['Viviendas'].values[0]
-                    if v_tot > 0:
-                        for col in ['Agua de red', 'Red de cloaca', 'Gas natural', 'Tiene internet', 'No tiene internet', 'Propia', 'Alquilada', 'Cedida por trabajo', 'Prestada', 'Otra situacion']:
-                            if col in df_totales.columns:
-                                df_totales[col + ' %'] = (df_totales[col] / v_tot * 100).round(2).astype(str) + '%'
+                # 3. CÁLCULO ESTRICTO DE PORCENTAJES BASADO EN EL UNIVERSO VÁLIDO (Suma de partes)
+                # Para la Red de cloaca, calculamos dividiendo los casos totales sobre la suma real de bases válidas
+                if 'Red de cloaca' in df_totales.columns and 'Red de cloaca %' in resultado_tabla.columns:
+                    total_cloaca_casos = df_totales['Red de cloaca'].values[0]
+                    
+                    # Reconstruimos la base real de cada fila sumando las partes (Casos / Porcentaje individual)
+                    pct_individual = resultado_tabla['Red de cloaca %'].astype(str).str.replace(',', '.').str.replace('%', '').astype(float) / 100
+                    base_real_por_fila = resultado_tabla['Red de cloaca'] / pct_individual
+                    suma_bases_reales = base_real_por_fila.sum()
+                    
+                    if suma_bases_reales > 0:
+                        porcentaje_real_total = (total_cloaca_casos / suma_bases_reales) * 100
+                        df_totales['Red de cloaca %'] = f"{porcentaje_real_total:.2f}%".replace('.', ',')
+
+                # Resto de los porcentajes estándar sobre Viviendas y Población
+                cols_viviendas = ['Agua de red', 'Gas natural', 'Tiene internet', 'No tiene internet', 'Propia', 'Alquilada', 'Cedida por trabajo', 'Prestada', 'Otra situacion']
+                for col in cols_viviendas:
+                    if col in df_totales.columns and 'Viviendas' in df_totales.columns:
+                        v_tot = df_totales['Viviendas'].values[0]
+                        if v_tot > 0:
+                            df_totales[col + ' %'] = (df_totales[col] / v_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
 
                 if 'Propia' in df_totales.columns:
                     prop_tot = df_totales['Propia'].values[0]
                     if prop_tot > 0:
-                        df_totales['Escritura %'] = (df_totales['Escritura'] / prop_tot * 100).round(2).astype(str) + '%'
-                        df_totales['Boleto de compra-venta %'] = (df_totales['Boleto de compra-venta'] / prop_tot * 100).round(2).astype(str) + '%'
-                        df_totales['Otra documentacion %'] = (df_totales['Otra documentación'] / prop_tot * 100).round(2).astype(str) + '%'
-                        df_totales['No tiene documentacion %'] = (df_totales['No tiene documentación'] / prop_tot * 100).round(2).astype(str) + '%'
+                        df_totales['Escritura %'] = (df_totales['Escritura'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                        df_totales['Boleto de compra-venta %'] = (df_totales['Boleto de compra-venta'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                        df_totales['Otra documentacion %'] = (df_totales['Otra documentación'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                        df_totales['No tiene documentacion %'] = (df_totales['No tiene documentación'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
 
                 if 'Población' in df_totales.columns:
                     pob_tot = df_totales['Población'].values[0]
@@ -189,8 +205,9 @@ if st.session_state['mostrar_resultados']:
                         }
                         for col, nombre_pct in cols_poblacion.items():
                             if col in df_totales.columns:
-                                df_totales[nombre_pct] = (df_totales[col] / pob_tot * 100).round(2).astype(str) + '%'
+                                df_totales[nombre_pct] = (df_totales[col] / pob_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
 
+                # 4. Unimos todo y lo mandamos a la pantalla
                 df_final = pd.concat([resultado_tabla, df_totales], ignore_index=True)
 
                 st.dataframe(df_final)
