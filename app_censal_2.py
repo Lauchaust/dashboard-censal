@@ -165,13 +165,13 @@ if st.session_state['mostrar_resultados']:
                 df_totales = pd.DataFrame([totales])
                 df_totales['Completo'] = 'TOTAL' 
 
-                # 3. RECREAMOS LAS FÓRMULAS DE LOS PORCENTAJES EN VIVO
+                # 3. RECREAMOS LAS FÓRMULAS DE LOS PORCENTAJES EN VIVO (Basadas en Viviendas o Población)
                 # A. Porcentajes sobre el total de VIVIENDAS
                 cols_viviendas = ['Agua de red', 'Red de cloaca', 'Gas natural', 'Tiene internet', 
                                   'No tiene internet', 'Propia', 'Alquilada', 'Cedida por trabajo', 
                                   'Prestada', 'Otra situacion']
                 for col in cols_viviendas:
-                    if col in df_totales.columns:
+                    if col in df_totales.columns and 'Viviendas' in df_totales.columns:
                         df_totales[col + ' %'] = (df_totales[col] / df_totales['Viviendas'] * 100).round(2).astype(str) + '%'
 
                 # B. Porcentajes sobre viviendas PROPIAS
@@ -195,26 +195,8 @@ if st.session_state['mostrar_resultados']:
                     '65 o más': 'Porcentaje_21'
                 }
                 for col, nombre_pct in cols_poblacion.items():
-                    if col in df_totales.columns:
+                    if col in df_totales.columns and 'Población' in df_totales.columns:
                         df_totales[nombre_pct] = (df_totales[col] / df_totales['Población'] * 100).round(2).astype(str) + '%'
-
-                # D. Porcentajes de EDUCACIÓN
-                base_edu = (df_totales.get('Jardín maternal, guardería, centro de cuidado, salas de 0 a 5, jardín de infantes o preescolar', 0) +
-                            df_totales.get('Primario', 0) + df_totales.get('Secundario', 0) + df_totales.get('Terciario no universitario', 0) + 
-                            df_totales.get('Universitario de grado', 0) + df_totales.get('Posgrado (especialización, maestría o doctorado)', 0))
-                
-                df_totales['_22'] = (df_totales.get('Jardín maternal, guardería, centro de cuidado, salas de 0 a 5, jardín de infantes o preescolar', 0) / base_edu * 100).round(2).astype(str) + '%'
-                df_totales['Porcentaje_23'] = (df_totales.get('Primario', 0) / base_edu * 100).round(2).astype(str) + '%'
-                df_totales['Porcentaje_24'] = (df_totales.get('Secundario', 0) / base_edu * 100).round(2).astype(str) + '%'
-                df_totales['Porcentaje_25'] = (df_totales.get('Terciario no universitario', 0) / base_edu * 100).round(2).astype(str) + '%'
-                df_totales['Porcentaje_26'] = (df_totales.get('Universitario de grado', 0) / base_edu * 100).round(2).astype(str) + '%'
-                df_totales['Posgrado %'] = (df_totales.get('Posgrado (especialización, maestría o doctorado)', 0) / base_edu * 100).round(2).astype(str) + '%'
-
-                # E. Porcentajes de OCUPACIÓN
-                base_ocupacion = df_totales.get('Ocupado', 0) + df_totales.get('Desocupado', 0) + df_totales.get('Inactivo', 0)
-                df_totales['Ocupado %'] = (df_totales.get('Ocupado', 0) / base_ocupacion * 100).round(2).astype(str) + '%'
-                df_totales['Desocupado %'] = (df_totales.get('Desocupado', 0) / base_ocupacion * 100).round(2).astype(str) + '%'
-                df_totales['Inactivo %'] = (df_totales.get('Inactivo', 0) / base_ocupacion * 100).round(2).astype(str) + '%'
 
                 # 4. Unimos todo y lo mandamos a la pantalla
                 df_final = pd.concat([resultado_tabla, df_totales], ignore_index=True)
