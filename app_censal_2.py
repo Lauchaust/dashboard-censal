@@ -86,7 +86,7 @@ if st.session_state['mostrar_resultados']:
                 resultado_geo = interseccion[interseccion['porc_adentro'] >= tolerancia].copy()
                 resultado_geo = resultado_geo.to_crs(epsg=4326) 
                 
-               # 6. Limpieza extrema, orden y numeración
+                # 6. Limpieza extrema, orden y numeración
                 resultado_tabla = resultado_geo.drop(columns=['geometry'])
                 resultado_tabla = resultado_tabla.sort_values(by='Completo')
                 
@@ -98,9 +98,28 @@ if st.session_state['mostrar_resultados']:
                 resultado_tabla = resultado_tabla.drop(columns=[col for col in basura_derecha if col in resultado_tabla.columns])
                 
                 resultado_tabla = resultado_tabla.reset_index(drop=True)
+                
+                # ==========================================
+                # 🛠️ AJUSTE MANUAL DE RADIOS CENSALES
+                # ==========================================
+                st.markdown("### 🛠️ Ajuste Manual de Radios")
+                lista_radios = resultado_tabla['Completo'].tolist()
+                
+                radios_elegidos = st.multiselect(
+                    "Si querés quitar algún radio censal que entró por error, borralo de esta lista:",
+                    options=lista_radios,
+                    default=lista_radios
+                )
+                
+                # Filtramos la tabla y la geografía según lo que hayas dejado en el selector
+                resultado_tabla = resultado_tabla[resultado_tabla['Completo'].isin(radios_elegidos)].copy()
+                resultado_geo = resultado_geo[resultado_geo['Completo'].isin(radios_elegidos)].copy()
+                
+                # Acomodamos el índice para que arranque en 1
+                resultado_tabla = resultado_tabla.reset_index(drop=True)
                 resultado_tabla.index = resultado_tabla.index + 1
                 
-                st.success(f"¡Éxito! Se detectaron {len(resultado_tabla)} radios exactos.")
+                st.success(f"¡Éxito! Vas a procesar {len(resultado_tabla)} radios censales.")
                 
                 # ==========================================
                 # 🌟 MAPA INTERACTIVO
@@ -153,89 +172,92 @@ if st.session_state['mostrar_resultados']:
                 # 1. Limpiamos la fila TOTAL original congelada (si se coló)
                 resultado_tabla = resultado_tabla[resultado_tabla['Completo'] != 'TOTAL']
 
-                # 2. Sumamos todas las columnas numéricas absolutas
-                totales = resultado_tabla.sum(numeric_only=True)
-                df_totales = pd.DataFrame([totales])
-                df_totales['Completo'] = 'TOTAL' 
-
-                # --- 3. CÁLCULO ESTRICTO CLOACAS (Suma de partes) ---
-                if 'Red de cloaca' in df_totales.columns and 'Red de cloaca %' in resultado_tabla.columns:
-                    total_cloaca_casos = df_totales['Red de cloaca'].values[0]
-                    # Reconstruimos la base real de cada fila para que no dé el 5,37% sino el exacto
-                    pct_individual = resultado_tabla['Red de cloaca %'].astype(str).str.replace(',', '.').str.replace('%', '').astype(float) / 100
-                    base_real_por_fila = resultado_tabla['Red de cloaca'] / pct_individual
-                    suma_bases_reales = base_real_por_fila.sum()
-                    
-                    if suma_bases_reales > 0:
-                        porcentaje_real_total = (total_cloaca_casos / suma_bases_reales) * 100
-                        df_totales['Red de cloaca %'] = f"{porcentaje_real_total:.2f}%".replace('.', ',')
-
-                # --- 4. EDUCACIÓN: Porcentajes sobre la suma de niveles ---
-                col_jardin = 'Jardín maternal, guardería, centro de cuidado, salas de 0 a 5, jardín de infantes o preescolar'
-                if col_jardin in df_totales.columns:
-                    base_edu = (df_totales[col_jardin].values[0] + 
-                                df_totales['Primario'].values[0] + 
-                                df_totales['Secundario'].values[0] + 
-                                df_totales['Terciario no universitario'].values[0] + 
-                                df_totales['Universitario de grado'].values[0] + 
-                                df_totales['Posgrado (especialización, maestría o doctorado)'].values[0])
-                    
-                    if base_edu > 0:
-                        df_totales['_22'] = (df_totales[col_jardin] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Porcentaje_23'] = (df_totales['Primario'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Porcentaje_24'] = (df_totales['Secundario'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Porcentaje_25'] = (df_totales['Terciario no universitario'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Porcentaje_26'] = (df_totales['Universitario de grado'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Posgrado %'] = (df_totales['Posgrado (especialización, maestría o doctorado)'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
-
-                # --- 5. OCUPACIÓN: Porcentajes sobre la población activa/inactiva ---
-                if 'Ocupado' in df_totales.columns:
-                    base_ocupacion = (df_totales['Ocupado'].values[0] + 
-                                      df_totales['Desocupado'].values[0] + 
-                                      df_totales['Inactivo'].values[0])
-                    
-                    if base_ocupacion > 0:
-                        df_totales['Ocupado %'] = (df_totales['Ocupado'] / base_ocupacion * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Desocupado %'] = (df_totales['Desocupado'] / base_ocupacion * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Inactivo %'] = (df_totales['Inactivo'] / base_ocupacion * 100).round(2).astype(str).str.replace('.', ',') + '%'
-
-                # --- 6. Resto de los porcentajes estándar ---
-                cols_viviendas = ['Agua de red', 'Gas natural', 'Tiene internet', 'No tiene internet', 'Propia', 'Alquilada', 'Cedida por trabajo', 'Prestada', 'Otra situacion']
-                for col in cols_viviendas:
-                    if col in df_totales.columns and 'Viviendas' in df_totales.columns:
-                        v_tot = df_totales['Viviendas'].values[0]
-                        if v_tot > 0:
-                            df_totales[col + ' %'] = (df_totales[col] / v_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
-
-                if 'Propia' in df_totales.columns:
-                    prop_tot = df_totales['Propia'].values[0]
-                    if prop_tot > 0:
-                        df_totales['Escritura %'] = (df_totales['Escritura'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Boleto de compra-venta %'] = (df_totales['Boleto de compra-venta'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['Otra documentacion %'] = (df_totales['Otra documentación'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
-                        df_totales['No tiene documentacion %'] = (df_totales['No tiene documentación'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
-
-                if 'Población' in df_totales.columns:
-                    pob_tot = df_totales['Población'].values[0]
-                    if pob_tot > 0:
-                        cols_poblacion = {
-                            'Obra social o prepaga (incluye pami)': 'Obra social %',
-                            'Programas o planes estatales': 'Programas o planes estatales %',
-                            'No tiene ni obra social, ni prepaga, ni plan de salud': 'No tiene ni obra social, ni prepaga, ni plan de salud %',
-                            'Cobra jubilación': 'Porcentaje_15',
-                            'No cobra jubilación': 'Porcentaje_16',
-                            'Mujer': 'Porcentaje_17',
-                            'Varon': 'Porcentaje_18',
-                            'Hasta 14 años': 'Porcentaje_19',
-                            '15 a 64 años': 'Porcentaje_20',
-                            '65 o más': 'Porcentaje_21'
-                        }
-                        for col, nombre_pct in cols_poblacion.items():
-                            if col in df_totales.columns:
-                                df_totales[nombre_pct] = (df_totales[col] / pob_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
-
-                # --- 7. Unimos todo y mandamos a la pantalla ---
-                df_final = pd.concat([resultado_tabla, df_totales], ignore_index=True)
+                if not resultado_tabla.empty:
+                    # 2. Sumamos todas las columnas numéricas absolutas
+                    totales = resultado_tabla.sum(numeric_only=True)
+                    df_totales = pd.DataFrame([totales])
+                    df_totales['Completo'] = 'TOTAL' 
+    
+                    # --- 3. CÁLCULO ESTRICTO CLOACAS (Suma de partes) ---
+                    if 'Red de cloaca' in df_totales.columns and 'Red de cloaca %' in resultado_tabla.columns:
+                        total_cloaca_casos = df_totales['Red de cloaca'].values[0]
+                        # Reconstruimos la base real de cada fila para que no dé el 5,37% sino el exacto
+                        pct_individual = resultado_tabla['Red de cloaca %'].astype(str).str.replace(',', '.').str.replace('%', '').astype(float) / 100
+                        base_real_por_fila = resultado_tabla['Red de cloaca'] / pct_individual
+                        suma_bases_reales = base_real_por_fila.sum()
+                        
+                        if suma_bases_reales > 0:
+                            porcentaje_real_total = (total_cloaca_casos / suma_bases_reales) * 100
+                            df_totales['Red de cloaca %'] = f"{porcentaje_real_total:.2f}%".replace('.', ',')
+    
+                    # --- 4. EDUCACIÓN: Porcentajes sobre la suma de niveles ---
+                    col_jardin = 'Jardín maternal, guardería, centro de cuidado, salas de 0 a 5, jardín de infantes o preescolar'
+                    if col_jardin in df_totales.columns:
+                        base_edu = (df_totales[col_jardin].values[0] + 
+                                    df_totales['Primario'].values[0] + 
+                                    df_totales['Secundario'].values[0] + 
+                                    df_totales['Terciario no universitario'].values[0] + 
+                                    df_totales['Universitario de grado'].values[0] + 
+                                    df_totales['Posgrado (especialización, maestría o doctorado)'].values[0])
+                        
+                        if base_edu > 0:
+                            df_totales['_22'] = (df_totales[col_jardin] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Porcentaje_23'] = (df_totales['Primario'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Porcentaje_24'] = (df_totales['Secundario'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Porcentaje_25'] = (df_totales['Terciario no universitario'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Porcentaje_26'] = (df_totales['Universitario de grado'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Posgrado %'] = (df_totales['Posgrado (especialización, maestría o doctorado)'] / base_edu * 100).round(2).astype(str).str.replace('.', ',') + '%'
+    
+                    # --- 5. OCUPACIÓN: Porcentajes sobre la población activa/inactiva ---
+                    if 'Ocupado' in df_totales.columns:
+                        base_ocupacion = (df_totales['Ocupado'].values[0] + 
+                                          df_totales['Desocupado'].values[0] + 
+                                          df_totales['Inactivo'].values[0])
+                        
+                        if base_ocupacion > 0:
+                            df_totales['Ocupado %'] = (df_totales['Ocupado'] / base_ocupacion * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Desocupado %'] = (df_totales['Desocupado'] / base_ocupacion * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Inactivo %'] = (df_totales['Inactivo'] / base_ocupacion * 100).round(2).astype(str).str.replace('.', ',') + '%'
+    
+                    # --- 6. Resto de los porcentajes estándar ---
+                    cols_viviendas = ['Agua de red', 'Gas natural', 'Tiene internet', 'No tiene internet', 'Propia', 'Alquilada', 'Cedida por trabajo', 'Prestada', 'Otra situacion']
+                    for col in cols_viviendas:
+                        if col in df_totales.columns and 'Viviendas' in df_totales.columns:
+                            v_tot = df_totales['Viviendas'].values[0]
+                            if v_tot > 0:
+                                df_totales[col + ' %'] = (df_totales[col] / v_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+    
+                    if 'Propia' in df_totales.columns:
+                        prop_tot = df_totales['Propia'].values[0]
+                        if prop_tot > 0:
+                            df_totales['Escritura %'] = (df_totales['Escritura'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Boleto de compra-venta %'] = (df_totales['Boleto de compra-venta'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['Otra documentacion %'] = (df_totales['Otra documentación'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+                            df_totales['No tiene documentacion %'] = (df_totales['No tiene documentación'] / prop_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+    
+                    if 'Población' in df_totales.columns:
+                        pob_tot = df_totales['Población'].values[0]
+                        if pob_tot > 0:
+                            cols_poblacion = {
+                                'Obra social o prepaga (incluye pami)': 'Obra social %',
+                                'Programas o planes estatales': 'Programas o planes estatales %',
+                                'No tiene ni obra social, ni prepaga, ni plan de salud': 'No tiene ni obra social, ni prepaga, ni plan de salud %',
+                                'Cobra jubilación': 'Porcentaje_15',
+                                'No cobra jubilación': 'Porcentaje_16',
+                                'Mujer': 'Porcentaje_17',
+                                'Varon': 'Porcentaje_18',
+                                'Hasta 14 años': 'Porcentaje_19',
+                                '15 a 64 años': 'Porcentaje_20',
+                                '65 o más': 'Porcentaje_21'
+                            }
+                            for col, nombre_pct in cols_poblacion.items():
+                                if col in df_totales.columns:
+                                    df_totales[nombre_pct] = (df_totales[col] / pob_tot * 100).round(2).astype(str).str.replace('.', ',') + '%'
+    
+                    # --- 7. Unimos todo y mandamos a la pantalla ---
+                    df_final = pd.concat([resultado_tabla, df_totales], ignore_index=True)
+                else:
+                    df_final = resultado_tabla
 
                 st.dataframe(df_final)
                 
